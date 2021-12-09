@@ -4,7 +4,7 @@ import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import numpy as np
 
-WEIGHTS_PATH = 'net_weights/smoke_next.pth'
+WEIGHTS_PATH = 'net_weights.pth'
 
 batch_size = 16
 test_data_percent = 20
@@ -13,7 +13,7 @@ transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-data = torchvision.datasets.ImageFolder(root='dataset2', transform=transform)
+data = torchvision.datasets.ImageFolder(root='../dataset2', transform=transform)
 n = len(data)  # total number of examples
 n_test = int(test_data_percent * n / 100.0)  # take ~10% for test
 test_set, train_set = torch.utils.data.random_split(data, [n_test, n - n_test], generator=torch.Generator().manual_seed(42))

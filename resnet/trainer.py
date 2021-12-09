@@ -2,9 +2,9 @@ import torch.optim as optim
 import torch.nn as nn
 import torch
 from dataLoader import train_loader, WEIGHTS_PATH
-from smokeNeXt import SmokeNeXt
+from resnet.ResNet import *
 
-net = SmokeNeXt()
+net = resnet18(3, 2)
 gpu = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(gpu)
 net.to(gpu)
@@ -12,7 +12,7 @@ net.to(gpu)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
-for epoch in range(10):  # loop over the dataset multiple times
+for epoch in range(4):  # loop over the dataset multiple times
 
     running_loss = 0.0
     for i, data in enumerate(train_loader, 0):
@@ -31,9 +31,9 @@ for epoch in range(10):  # loop over the dataset multiple times
 
         # print statistics
         running_loss += loss.item()
-        if i % 10 == 9:    # print every 2000 mini-batches
+        if i % 10 == 9:    # print every 10 mini-batches
             print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 2000))
+                  (epoch + 1, i + 1, running_loss / 10))
             running_loss = 0.0
 
 print('Finished Training')
