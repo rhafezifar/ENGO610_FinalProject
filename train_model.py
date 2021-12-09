@@ -14,8 +14,8 @@ def train_model(model, patience, n_epochs):
     print(gpu)
     model.to(gpu)
 
-    model.load_state_dict(torch.load('checkpoint.pt'))
-    return model, None, None
+    # model.load_state_dict(torch.load('checkpoint.pt'))
+    # return model, None, None
 
     # specify optimizer
     optimizer = torch.optim.Adam(model.parameters())

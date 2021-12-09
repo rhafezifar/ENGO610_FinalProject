@@ -1,13 +1,53 @@
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from functools import partial
 from collections import OrderedDict
 
-from dataLoader import classes, test_loader
+import torchvision
+from matplotlib import pyplot as plt
+
 from plot_utils import plot_loss, plot_output
-from test_model import test_model
 from train_model import train_model
+from test_model import test_model
+from dataLoader import classes, test_loader, batch_size, reverse_transform
+
+
+class SpatialAttentionBlock(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttentionBlock, self).__init__()
+
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        y = torch.cat([avg_out, max_out], dim=1)
+        y = self.conv1(y)
+        return self.sigmoid(y) * x
+
+
+class SE_Block(nn.Module):
+    """Credit: https://github.com/moskomule/senet.pytorch/blob/master/senet/se_module.py#L4"""
+
+    def __init__(self, c, r=16):
+        super().__init__()
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Linear(in_features=c, out_features=c // r, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features=c // r, out_features=c, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        bs, c, _, _ = x.shape
+        y = self.squeeze(x).view(bs, c)
+        y = self.excitation(y).view(bs, c, 1, 1)
+        return x * y.expand_as(x)
 
 
 class Conv2dAuto(nn.Conv2d):
@@ -44,8 +84,7 @@ class ResNetResidualBlock(ResidualBlock):
         self.expansion, self.downsampling, self.conv = expansion, downsampling, conv
         self.shortcut = nn.Sequential(OrderedDict(
             {
-                'conv': nn.Conv2d(self.in_channels, self.expanded_channels, kernel_size=1,
-                                  stride=self.downsampling, bias=False),
+                'conv': nn.Conv2d(self.in_channels, self.expanded_channels, kernel_size=1, stride=self.downsampling, bias=False),
                 'bn': nn.BatchNorm2d(self.expanded_channels)
 
             })) if self.should_apply_shortcut else None
@@ -64,7 +103,7 @@ def conv_bn(in_channels, out_channels, conv, *args, **kwargs):
                                       'bn': nn.BatchNorm2d(out_channels)}))
 
 
-class ResNetBasicBlock(ResNetResidualBlock):
+class SEResNetBasicBlock(ResNetResidualBlock):
     # Basic ResNet block composed by two layers of 3x3conv/batchnorm/activation
     expansion = 1
 
@@ -74,10 +113,14 @@ class ResNetBasicBlock(ResNetResidualBlock):
             conv_bn(self.in_channels, self.out_channels, conv=self.conv, bias=False, stride=self.downsampling),
             activation(),
             conv_bn(self.out_channels, self.expanded_channels, conv=self.conv, bias=False),
+            # adding SE block
+            SE_Block(self.expanded_channels),
+            # adding Spatial Attention Block
+            SpatialAttentionBlock(),
         )
 
 
-class ResNetBottleNeckBlock(ResNetResidualBlock):
+class SEResNetBottleNeckBlock(ResNetResidualBlock):
     expansion = 4
 
     def __init__(self, in_channels, out_channels, activation=nn.ReLU, *args, **kwargs):
@@ -88,13 +131,17 @@ class ResNetBottleNeckBlock(ResNetResidualBlock):
             conv_bn(self.out_channels, self.out_channels, self.conv, kernel_size=3, stride=self.downsampling),
             activation(),
             conv_bn(self.out_channels, self.expanded_channels, self.conv, kernel_size=1),
+            # adding SE block
+            SE_Block(self.expanded_channels),
+            # adding Spatial Attention Block
+            SpatialAttentionBlock(),
         )
 
 
-class ResNetLayer(nn.Module):
+class SEResNetLayer(nn.Module):
     # A ResNet layer composed by `n` blocks stacked one after the other
 
-    def __init__(self, in_channels, out_channels, block=ResNetBasicBlock, n=1, *args, **kwargs):
+    def __init__(self, in_channels, out_channels, block=SEResNetBasicBlock, n=1, *args, **kwargs):
         super().__init__()
         # 'We perform downsampling directly by convolutional layers that have a stride of 2.'
         downsampling = 2 if in_channels != out_channels else 1
@@ -109,13 +156,13 @@ class ResNetLayer(nn.Module):
         return x
 
 
-class ResNetEncoder(nn.Module):
+class SEResNetEncoder(nn.Module):
     """
     ResNet encoder composed by increasing different layers with increasing features.
     """
 
     def __init__(self, in_channels=3, blocks_sizes=[64, 128, 256, 512], deepths=[2, 2, 2, 2],
-                 activation=nn.ReLU, block=ResNetBasicBlock, *args, **kwargs):
+                 activation=nn.ReLU, block=SEResNetBasicBlock, *args, **kwargs):
         super().__init__()
 
         self.blocks_sizes = blocks_sizes
@@ -127,9 +174,9 @@ class ResNetEncoder(nn.Module):
 
         self.in_out_block_sizes = list(zip(blocks_sizes, blocks_sizes[1:]))
         self.blocks = nn.ModuleList([
-            ResNetLayer(blocks_sizes[0], blocks_sizes[0], n=deepths[0], activation=activation, block=block, *args, **kwargs),
+            SEResNetLayer(blocks_sizes[0], blocks_sizes[0], n=deepths[0], activation=activation, block=block, *args, **kwargs),
             *[
-                ResNetLayer(in_channels * block.expansion, out_channels, n=n, activation=activation, block=block, *args, **kwargs)
+                SEResNetLayer(in_channels * block.expansion, out_channels, n=n, activation=activation, block=block, *args, **kwargs)
                 for (in_channels, out_channels), n in zip(self.in_out_block_sizes, deepths[1:])
             ]
         ])
@@ -163,7 +210,7 @@ class ResNet(nn.Module):
 
     def __init__(self, in_channels, n_classes, *args, **kwargs):
         super().__init__()
-        self.encoder = ResNetEncoder(in_channels, *args, **kwargs)
+        self.encoder = SEResNetEncoder(in_channels, *args, **kwargs)
         self.decoder = ResnetDecoder(self.encoder.blocks[-1].blocks[-1].expanded_channels, n_classes)
 
     def forward(self, x):
@@ -172,31 +219,31 @@ class ResNet(nn.Module):
         return x
 
 
-def resnet18(in_channels, n_classes):
-    return ResNet(in_channels, n_classes, block=ResNetBasicBlock, deepths=[2, 2, 2, 2])
+def attenseresnet18(in_channels, n_classes):
+    return ResNet(in_channels, n_classes, block=SEResNetBasicBlock, deepths=[2, 2, 2, 2])
 
 
-def resnet34(in_channels, n_classes):
-    return ResNet(in_channels, n_classes, block=ResNetBasicBlock, deepths=[3, 4, 6, 3])
+def attenseresnet34(in_channels, n_classes):
+    return ResNet(in_channels, n_classes, block=SEResNetBasicBlock, deepths=[3, 4, 6, 3])
 
 
-def resnet50(in_channels, n_classes):
-    return ResNet(in_channels, n_classes, block=ResNetBottleNeckBlock, deepths=[3, 4, 6, 3])
+def attenseresnet50(in_channels, n_classes):
+    return ResNet(in_channels, n_classes, block=SEResNetBottleNeckBlock, deepths=[3, 4, 6, 3])
 
 
-def resnet101(in_channels, n_classes):
-    return ResNet(in_channels, n_classes, block=ResNetBottleNeckBlock, deepths=[3, 4, 23, 3])
+def attenseresnet101(in_channels, n_classes):
+    return ResNet(in_channels, n_classes, block=SEResNetBottleNeckBlock, deepths=[3, 4, 23, 3])
 
 
-def resnet152(in_channels, n_classes):
-    return ResNet(in_channels, n_classes, block=ResNetBottleNeckBlock, deepths=[3, 8, 36, 3])
+def attenseresnet152(in_channels, n_classes):
+    return ResNet(in_channels, n_classes, block=SEResNetBottleNeckBlock, deepths=[3, 8, 36, 3])
 
 
 if __name__ == '__main__':
-    from torchsummary import summary
+    # from torchsummary import summary
 
-    model = resnet34(3, len(classes))
-    summary(model.cuda(), (3, 256, 256))
+    model = attenseresnet18(3, len(classes))
+    # summary(model.cuda(), (3, 256, 256))
 
     # early stopping patience; how long to wait after last time validation loss improved.
     patience = 20

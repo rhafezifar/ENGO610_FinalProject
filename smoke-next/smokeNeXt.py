@@ -2,6 +2,10 @@ from dataLoader import *
 import torch.nn as nn
 import torch.nn.functional as F
 
+from plot_utils import plot_loss, plot_output
+from test_model import test_model
+from train_model import train_model
+
 
 class SmokeNeXt(nn.Module):
     def __init__(self):
@@ -23,3 +27,32 @@ class SmokeNeXt(nn.Module):
         return x
 
 
+if __name__ == '__main__':
+    # from torchsummary import summary
+
+    model = SmokeNeXt()
+    # summary(model.cuda(), (3, 256, 256))
+
+    # early stopping patience; how long to wait after last time validation loss improved.
+    patience = 20
+
+    model, train_loss, valid_loss = train_model(model, patience, 100)
+    if train_loss and valid_loss:
+        plot_loss(train_loss, valid_loss)
+
+    ###############################################################################################################################
+    test_model(model)
+
+    # obtain one batch of test images
+    gpu = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    dataiter = iter(test_loader)
+    images, labels = dataiter.next()
+    images = images.to(gpu)
+    labels = labels.to(gpu)
+    # get sample outputs
+    output = model(images)
+    images = images.cpu()
+    # convert output probabilities to predicted class
+    _, preds = torch.max(output, 1)
+
+    plot_output(images, labels, preds)

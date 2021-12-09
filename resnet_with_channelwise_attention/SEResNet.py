@@ -222,14 +222,15 @@ def seresnet152(in_channels, n_classes):
 if __name__ == '__main__':
     # from torchsummary import summary
 
-    model = seresnet18(3, len(classes))
+    model = seresnet34(3, len(classes))
     # summary(model.cuda(), (3, 256, 256))
 
     # early stopping patience; how long to wait after last time validation loss improved.
     patience = 20
 
     model, train_loss, valid_loss = train_model(model, patience, 100)
-    plot_loss(train_loss, valid_loss)
+    if train_loss and valid_loss:
+        plot_loss(train_loss, valid_loss)
 
     ###############################################################################################################################
     test_model(model)
