@@ -7,19 +7,26 @@ import numpy as np
 WEIGHTS_PATH = 'net_weights.pth'
 
 batch_size = 16
-test_data_percent = 20
+test_data_percent = 20  # take ~20% for test
+validation_data_percent = 15  # take ~15% for test
+
+reverse_transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((-1.0, -1.0, -1.0), (2.0, 2.0, 2.0))])
 
 transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-data = torchvision.datasets.ImageFolder(root='../dataset2', transform=transform)
+data = torchvision.datasets.ImageFolder(root='../dataset3', transform=transform)
 n = len(data)  # total number of examples
-n_test = int(test_data_percent * n / 100.0)  # take ~10% for test
-test_set, train_set = torch.utils.data.random_split(data, [n_test, n - n_test], generator=torch.Generator().manual_seed(42))
+n_test = int(test_data_percent * n / 100.0)
+n_valid = int(validation_data_percent * n / 100.0)
+test_set, valid_set, train_set = torch.utils.data.random_split(data, [n_test, n_valid, n - n_valid - n_test], generator=torch.Generator().manual_seed(42))
 
 
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, drop_last=True)
+valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=batch_size, shuffle=True, drop_last=True)
 test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
 
 # classes = ('Cloud', 'Dust', 'Haze', 'Land', 'Seaside', 'Smoke')
